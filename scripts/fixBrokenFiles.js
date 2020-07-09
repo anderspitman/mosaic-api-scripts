@@ -29,8 +29,8 @@ const vcfDir = `${projectDir}/VCF/Complete`;
 
   const samples = JSON.parse(body);
 
-  for (const sample of samples.slice(0, 3)) {
-  //for (const sample of samples) {
+  //for (const sample of samples.slice(0, 100)) {
+  for (const sample of samples) {
     //console.log(sample);
     const files = await getSampleFiles(projectId, sample.id);
     await checkFiles(projectId, sample.id, files);
@@ -49,10 +49,19 @@ async function checkFile(projectId, sampleId, file) {
   //console.log(file);
 
   let expectedUri;
+  let filename;
+
+  const comp = {
+    uri: {},
+    sizes: {},
+    name: {},
+    nickname: {},
+  };
 
   switch (file.type) {
     case 'cram':
     case 'crai':
+      filename = file.name;
       expectedUri = `file://${dataDir}/${file.name}`;
       break;
     case 'vcf':
@@ -65,68 +74,112 @@ async function checkFile(projectId, sampleId, file) {
         console.error(e);
       }
 
-      let vcfPath;
-      let tbiPath;
+      for (const f of filenames) {
 
-      for (const filename of filenames) {
-        if (filename.endsWith('.vcf.gz')) {
-          vcfPath = vcfDir + '/' + filename;
-        }
-        else if (filename.endsWith('.vcf.gz.tbi')) {
-          tbiPath = vcfDir + '/' + filename;
-        }
-      }
+        filename = f;
+        expectedUri = 'file://' + vcfDir + '/' + filename;
 
-      if (file.type === 'vcf') {
-        expectedUri = 'file://' + vcfPath;
-      }
-      else {
-        expectedUri = 'file://' + tbiPath;
+        if (file.type === 'vcf' && filename.endsWith('.vcf.gz')) {
+          break;
+        }
+        else if (file.type === 'tbi' && filename.endsWith('.vcf.gz.tbi')) {
+          break;
+        }
       }
 
       break;
   }
 
-  const broken = !await isAccessible(file.uri);
+  let valid = true;
+  let stats;
+  let size;
+  try {
+    stats = await fs.promises.stat(file.uri.slice('file://'.length));
+  }
+  catch (e) {
+    valid = false;
+    comp.uri.act = file.uri;
+    comp.uri.exp = expectedUri;
+  }
 
-  if (broken) {
+  if (stats && stats.size !== Number(file.size)) {
+    valid = false;
+    comp.sizes.act = Number(file.size);
+    comp.sizes.exp = stats.size;
+    size = stats.size;
+  }
 
-    console.log(expectedUri);
+  if (file.name !== filename) {
+    valid = false;
+    comp.name.act = file.name;
+    comp.name.exp = filename;
+  }
+
+  if (file.nickname !== filename) {
+    valid = false;
+    comp.nickname.act = file.name;
+    comp.nickname.exp = filename;
+  }
+
+
+  if (!valid) {
 
     const canRepair = await isAccessible(expectedUri);
 
     if (canRepair) {
       console.log("repairing");
-      await updateFileUri(projectId, sampleId, file.id, expectedUri);
+      //console.log(file.name);
+      //console.log(file);
+      //console.log(comp);
+      await updateFile(projectId, sampleId, file.id, expectedUri, size, filename, filename);
     }
     else {
       console.log("can't repair");
     }
 
-    console.log("Current URI:");
-    console.log(file.uri);
-    console.log("Expected URI:");
-    console.log(expectedUri);
+    //console.log("Current URI:");
+    //console.log(file.uri);
+    //console.log("Expected URI:");
+    //console.log(expectedUri);
   }
 }
 
-async function updateFileUri(projectId, sampleId, fileId, uri) {
+async function fileHealthy(file, uri, filename) {
+}
+
+async function updateFile(projectId, sampleId, fileId, uri, size, name, nickname) {
   const url = `${mosaicUrl}/projects/${projectId}/samples/${sampleId}/files/${fileId}`;
-  console.log(url);
+
+  const params = {
+    uri,
+  };
+
+  if (size) {
+    params.size = size;
+  }
+
+  if (name) {
+    params.name = name;
+  }
+
+  if (nickname) {
+    params.nickname = nickname;
+  }
+
+  //console.log(params);
+
   const res = await fetch(url, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      uri,
-    }),
+    body: JSON.stringify(params),
   });
 
   const bodyJson = await readBody(res);
   //const body = JSON.parse(bodyJson);
-  console.log(bodyJson);
+  //console.log(bodyJson);
 }
 
 
